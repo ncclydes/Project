@@ -1,8 +1,11 @@
 #ifndef _USER_H_
 #define _USER_H_
 
+#include "pstat.h"
+
 struct stat;
 struct pstat;
+
 // system calls
 int fork(void);
 int exit(void) __attribute__((noreturn));

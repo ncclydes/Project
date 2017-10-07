@@ -404,6 +404,7 @@ int sys_getpinfo(void) {
 		st->priority[i] = pstat_var.priority[i];
 		for(j=0;j<4;j++){
 					st->ticks[i][j] =pstat_var.ticks[i][j] ;
+					st->wait_ticks[i][j] = pstat_var.wait_ticks[i][j];
 		}
 	}
 
