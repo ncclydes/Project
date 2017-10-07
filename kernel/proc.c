@@ -51,19 +51,6 @@ allocproc (void)
 	for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
 		if (p->state == UNUSED)
 			goto found;
-		p->priority = 3;
-		p->clicks = 0;
-		pstat_var.inuse[p->pid - 1] = 1;
-		pstat_var.priority[p->pid - 1] = p->priority;
-		pstat_var.ticks[p->pid - 1][0] = 0;
-		pstat_var.ticks[p->pid - 1][1] = 0;
-		pstat_var.ticks[p->pid - 1][2] = 0;
-		pstat_var.ticks[p->pid - 1][3] = 0;
-		pstat_var.pid[p->pid - 1] = p->pid;
-		pstat_var.wait_ticks[p->pid - 1][0] = 0;
-		pstat_var.wait_ticks[p->pid - 1][1] = 0;
-		pstat_var.wait_ticks[p->pid - 1][2] = 0;
-		pstat_var.wait_ticks[p->pid - 1][3] = 0;
 		release(&ptable.lock);
 		return 0;
 found:
@@ -79,6 +66,7 @@ found:
 		pstat_var.ticks[p->pid - 1][1] = 0;
 		pstat_var.ticks[p->pid - 1][2] = 0;
 		pstat_var.ticks[p->pid - 1][3] = 0;
+		pstat_var.state[p->pid - 1] = EMBRYO;
 		pstat_var.pid[p->pid - 1] = p->pid;
 		pstat_var.wait_ticks[p->pid - 1][0] = 0;
 		pstat_var.wait_ticks[p->pid - 1][1] = 0;
@@ -90,6 +78,7 @@ found:
 		if ((p->kstack = kalloc ()) == 0)
 		{
 			p->state = UNUSED;
+			pstat_var.state[p->pid - 1] = UNUSED;
 			return 0;
 		}
 		sp = p->kstack + KSTACKSIZE;
@@ -177,6 +166,7 @@ fork (void)
 		kfree (np->kstack);
 		np->kstack = 0;
 		np->state = UNUSED;
+		pstat_var.state[np->pid - 1] = UNUSED;
 		return -1;
 	}
 	np->sz = proc->sz;
@@ -190,6 +180,7 @@ fork (void)
 	np->cwd = idup (proc->cwd);
 	pid = np->pid;
 	np->state = RUNNABLE;
+	pstat_var.state[np->pid - 1] = RUNNABLE;
 	safestrcpy (np->name, proc->name, sizeof (proc->name));
 	return pid;
 }
@@ -236,6 +227,7 @@ exit (void)
 
 	// Jump into the scheduler, never to return.
 	proc->state = ZOMBIE;
+	pstat_var.state[proc->pid - 1] = ZOMBIE;
 	sched ();
 	panic ("zombie exit");
 }
@@ -265,6 +257,7 @@ wait (void)
 				p->kstack = 0;
 				freevm (p->pgdir);
 				p->state = UNUSED;
+				pstat_var.state[p->pid - 1] = UNUSED;
 				p->pid = 0;
 				p->parent = 0;
 				p->name[0] = 0;
@@ -367,7 +360,7 @@ elevate(int pid){
 
   if (numProcMed > -1){
     for (i = 0; i <= numProcMed; i++){
-      if ((queueMed[i] -> state != RUNNABLE) || (queueMed[i] -> pid == pid))
+      if (queueMed[i] -> pid == pid)
         continue;
 
       p = queueMed[i];
@@ -377,9 +370,9 @@ elevate(int pid){
       if (wait % (10 * clkPerPrio[1]) == 0){
         if (addToRear(queueHigh, p, &numProcHigh)==0){
           remove(queueMed, p, &numProcMed);
-	  pstat_var.priority[p -> pid - 1] = 3;
 	  p -> priority = 3;
-	  p -> clicks = pstat_var.ticks[p -> pid - 1][3];
+	  pstat_var.priority[p->pid - 1] = 3;
+	  p -> clicks = pstat_var.ticks[p->pid - 1][3];
 	  i--;
         }
       }
@@ -388,7 +381,7 @@ elevate(int pid){
 
   if (numProcLow > -1){
     for (i = 0; i <= numProcLow; i++){
-      if ((queueLow[i] -> state != RUNNABLE) || (queueLow[i] -> pid == pid))
+      if (queueLow[i] -> pid == pid)
         continue;
 
       p = queueLow[i];
@@ -400,7 +393,7 @@ elevate(int pid){
           remove(queueLow, p, &numProcLow);
           pstat_var.priority[p->pid - 1] = 2;
           p -> priority = 2;
-          p -> clicks = pstat_var.ticks[p -> pid - 1][2];
+	  p->clicks = pstat_var.ticks[p->pid - 1][2];
           i--;
         }
       }
@@ -409,7 +402,7 @@ elevate(int pid){
 
   if (numProcSuperLow > -1){
     for(i = 0; i <= numProcSuperLow; i++){
-      if ((queueSuperLow[i] -> state != RUNNABLE) || (queueSuperLow[i] -> pid == pid))
+      if (queueSuperLow[i] -> pid == pid)
         continue;
 
       p = queueSuperLow[i];
@@ -420,7 +413,7 @@ elevate(int pid){
           remove(queueSuperLow, p, &numProcSuperLow);
           pstat_var.priority[p->pid - 1] = 1;
           p -> priority = 1;
-          p -> clicks = pstat_var.ticks[p->pid - 1][1];
+	  p->clicks = pstat_var.ticks[p->pid - 1][1];
           i--;
         }
       }
@@ -446,115 +439,131 @@ scheduler (void)
 	// Loop over process table looking for process to run.
 	acquire(&ptable.lock);
 
-	if(numProcHigh!=-1){
+  queueStart:
+	if(numProcHigh != -1){
 		for(i=0;i<=numProcHigh;i++){
 		  if(queueHigh[i]->state != RUNNABLE)
 			  continue;
+
 		  p=queueHigh[i];
 		  proc = queueHigh[i];
 		  p->clicks++;
+		  pstat_var.ticks[p->pid - 1][3] = p->clicks;
 		  switchuvm(p);
 		  p->state = RUNNING;
+		  pstat_var.state[p->pid - 1] = RUNNING;
 		  swtch(&cpu->scheduler, proc->context);
 		  switchkvm();
-		  pstat_var.ticks[p -> pid - 1][3] = p->clicks;
 
-		  if(p->clicks % clkPerPrio[0] == 0){
+		  pstat_var.ticks[p->pid - 1][3] = p->clicks;
+		  
+		  if(p ->clicks % clkPerPrio[0] == 0){
 		    //Copy process to lower queue and, if done, remove
 		    //from higher priority queue
 		    if(addToRear(queueMed, p, &numProcMed) == 0){
 			  remove(queueHigh, p, &numProcHigh);
 			  pstat_var.priority[p->pid - 1] = 2;
 			  p -> priority = 2;
-			  p -> clicks = pstat_var.ticks[p->pid - 1][2];
+			  p->clicks = pstat_var.ticks[p->pid - 1][2];
 			  i--;
 		      }
-		    /*		    else { //No space in lower queue, so just move to the end
-		      remove(queueHigh, p, &numProcHigh);
-		      addToRear(queueHigh, p, &numProcHigh);
-		      }*/
-		 }
-		  
+		  }
+
 		  elevate(p -> pid);
 		  proc = 0;
+		  goto queueStart;
 		}
 	}
 	if(numProcMed!=-1){
 		for(i=0;i<=numProcMed;i++){
 		  if(queueMed[i]->state != RUNNABLE)
 			  continue;
+
 		  p=queueMed[i];
 		  proc = queueMed[i];
 		  p->clicks++;
+		  //pstat_var.ticks[p->pid - 1][2] = p->clicks;
+		  pstat_var.wait_ticks[p->pid - 1][2] = 0;
+		  
 		  switchuvm(p);
 		  p->state = RUNNING;
+		  pstat_var.state[p->pid - 1] = RUNNING;
 		  swtch(&cpu->scheduler, proc->context);
 		  switchkvm();
-		  pstat_var.ticks[p->pid - 1][2]=p->clicks;
 
-		  if(p->clicks  % clkPerPrio[1] == 0){
+		  pstat_var.ticks[p->pid - 1][2] = p->clicks;
+
+		  if(p -> clicks % clkPerPrio[1] == 0){
 		    if(addToRear(queueLow, p, &numProcLow) == 0){
 			remove(queueMed, p, &numProcMed);
-			p->clicks = pstat_var.ticks[p->pid - 1][1];
 			p -> priority = 1;
 			pstat_var.priority[p->pid - 1] = 1;
+			p->clicks = pstat_var.ticks[p->pid - 1][1];
 			i--;
 		    }
-		    /*		    else {
-		      remove(queueMed, p, &numProcMed);
-		      addToRear(queueMed, p, &numProcMed);
-		    }*/
-	       	}
+		  }
+
 		  elevate(p -> pid);
 	      proc = 0;
+	      goto queueStart;
 	    }
 	}
-    if(numProcLow!=-1){
+	if(numProcLow!=-1){
 		for(i=0;i<=numProcLow;i++){
-			if(queueLow[i]->state != RUNNABLE)
+		  if(queueLow[i]->state != RUNNABLE)
 				continue;
 
 		p=queueLow[i];
 		proc = queueLow[i];
 		p->clicks++;
+		pstat_var.ticks[p->pid - 1][1] = p->clicks;
+		pstat_var.wait_ticks[p->pid - 1][1] = 0;
+		
 		switchuvm(p);
 		p->state = RUNNING;
+		//pstat_var.state[p->pid - 1] = RUNNING;
 		swtch(&cpu->scheduler, proc->context);
 		switchkvm();
-		pstat_var.ticks[p->pid - 1][1]= p->clicks;
 
-		if(p->clicks % clkPerPrio[2] == 0){
+		pstat_var.ticks[p->pid - 1][1] = p->clicks;
+		
+		if(p -> clicks % clkPerPrio[2] == 0){
 		  if(addToRear(queueSuperLow, p, &numProcSuperLow) == 0){
 		  remove(queueLow, p, &numProcLow);
-		  p->clicks = pstat_var.ticks[p->pid - 1][0];
 		  p -> priority = 0;
 		  pstat_var.priority[p->pid - 1] = 0;
+      		  p->clicks = pstat_var.ticks[p->pid - 1][0];
 		  i--;
 		  }
-		  /*		  else {
-		    remove(queueLow, p, &numProcLow);
-		    addToRear(queueLow, p, &numProcLow);
-		  }*/
 		}
+
 		elevate(p -> pid);
 		proc = 0;
+		goto queueStart;
 	    }
 	}
 	if(numProcSuperLow!=-1){
 		for(i=0;i<=numProcSuperLow;i++){
-			if(queueSuperLow[i]->state != RUNNABLE)
+		  if(queueSuperLow[i]->state != RUNNABLE)
 				continue;
+
 			p=queueSuperLow[i];
 			proc = queueSuperLow[i];
 			p->clicks++;
+			pstat_var.wait_ticks[p->pid - 1][0] = 0;
+			//pstat_var.ticks[p->pid - 1][0] = p->clicks;
+			
 			switchuvm(p);
 			p->state = RUNNING;
+			pstat_var.state[p->pid - 1] = RUNNING;
 			swtch(&cpu->scheduler, proc->context);
 			switchkvm();
-			pstat_var.ticks[p->pid - 1][0]=p->clicks;
+
+			pstat_var.ticks[p->pid - 1][0] = p->clicks;
 
 			elevate(p->pid);
 			proc = 0;
+			goto queueStart;
 		}
 	}
 	release(&ptable.lock);
@@ -587,6 +596,7 @@ yield (void)
 {
 	acquire (&ptable.lock);	//DOC: yieldlock
 	proc->state = RUNNABLE;
+	pstat_var.state[proc->pid - 1] = RUNNABLE;
 	sched ();
 	release (&ptable.lock);
 }
@@ -626,6 +636,7 @@ sleep (void *chan, struct spinlock *lk)
 	// Go to sleep.
 	proc->chan = chan;
 	proc->state = SLEEPING;
+	pstat_var.state[proc->pid - 1] = SLEEPING;
 	sched ();
 
 	// Tidy up.
@@ -644,43 +655,10 @@ static void
 wakeup1 (void *chan)
 {
 	struct proc *p;
-	int i;
 	for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
 		if (p->state == SLEEPING && p->chan == chan){
-			p->clicks = 0;
 			p->state = RUNNABLE;
-			if(p->priority == 0) {
-				//numProcHigh++;
-				for(i=numProcHigh;i>0;i--) {
-					queueHigh[i] = queueHigh[i-1];
-				}
-				queueHigh[0] = p;
-			}
-			else if(p->priority == 1) {
-				//numProcMed++;
-				for(i=numProcMed;i>0;i--) {
-					queueMed[i] = queueMed[i-1];
-				}
-				queueMed[0] = p;
-			}
-			else if(p->priority == 2) {
-				//numProcLow++;
-				for(i=numProcLow;i>0;i--) {
-					queueLow[i] = queueLow[i-1];
-				}
-				queueLow[0] = p;
-			}
-			else  {
-				//numProcSuperLow++;
-				for(i=numProcSuperLow;i>0;i--) {
-					queueSuperLow[i] = queueSuperLow[i-1];
-				}
-				queueSuperLow[0] = p;
-			}
-
-				for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-								if (p->state == SLEEPING && p->chan == chan)
-												p->state = RUNNABLE;
+			pstat_var.state[p->pid - 1] = RUNNING;
 		}
 	}
 }
@@ -708,8 +686,10 @@ kill (int pid)
 		{
 			p->killed = 1;
 			// Wake process from sleep if necessary.
-			if (p->state == SLEEPING)
+			if (p->state == SLEEPING){
 				p->state = RUNNABLE;
+				pstat_var.state[p->pid - 1] = RUNNABLE;
+			}
 			release (&ptable.lock);
 			return 0;
 		}
