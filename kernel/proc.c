@@ -448,7 +448,8 @@ scheduler (void)
 		  p=queueHigh[i];
 		  proc = queueHigh[i];
 		  p->clicks++;
-		  pstat_var.ticks[p->pid - 1][3] = p->clicks;
+		  if(pstat_var.ticks[p->pid - 1][3] == 0)
+		    pstat_var.ticks[p->pid - 1][3] = 1;
 		  switchuvm(p);
 		  p->state = RUNNING;
 		  pstat_var.state[p->pid - 1] = RUNNING;
@@ -482,7 +483,8 @@ scheduler (void)
 		  p=queueMed[i];
 		  proc = queueMed[i];
 		  p->clicks++;
-		  //pstat_var.ticks[p->pid - 1][2] = p->clicks;
+		  if (pstat_var.ticks[p->pid - 1][2] == 0)
+		    pstat_var.ticks[p->pid - 1][2] = 1;
 		  pstat_var.wait_ticks[p->pid - 1][2] = 0;
 		  
 		  switchuvm(p);
@@ -516,12 +518,13 @@ scheduler (void)
 		p=queueLow[i];
 		proc = queueLow[i];
 		p->clicks++;
-		pstat_var.ticks[p->pid - 1][1] = p->clicks;
+		if (pstat_var.ticks[p->pid - 1][1] == 0)
+		  pstat_var.ticks[p->pid - 1][1] = 1;
 		pstat_var.wait_ticks[p->pid - 1][1] = 0;
 		
 		switchuvm(p);
 		p->state = RUNNING;
-		//pstat_var.state[p->pid - 1] = RUNNING;
+		pstat_var.state[p->pid - 1] = RUNNING;
 		swtch(&cpu->scheduler, proc->context);
 		switchkvm();
 
@@ -551,7 +554,8 @@ scheduler (void)
 			proc = queueSuperLow[i];
 			p->clicks++;
 			pstat_var.wait_ticks[p->pid - 1][0] = 0;
-			//pstat_var.ticks[p->pid - 1][0] = p->clicks;
+			if (pstat_var.ticks[p->pid - 1][0] == 0)
+			  pstat_var.ticks[p->pid - 1][0] = 1;
 			
 			switchuvm(p);
 			p->state = RUNNING;
